@@ -19,11 +19,9 @@ bool robolinkIsConnected();
 int  robolinkGetThrottle();
 int  robolinkGetSteer();
 
-// 5-DOF Arm control accessors
-int  robolinkGetWaist();
+// 2-DOF Arm control accessors
 int  robolinkGetShoulder();
 int  robolinkGetElbow();
-int  robolinkGetWrist();
 int  robolinkGetGripper();
 
 #endif // ROBOLINK_HANDLER_H

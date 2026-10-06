@@ -7,10 +7,8 @@ static bool initialized = false;
 // Cached control values
 static int currentThrottle = 0;
 static int currentSteer    = 0;
-static int currentWaist    = WAIST_HOME_DEG;
 static int currentShoulder = SHOULDER_HOME_DEG;
 static int currentElbow    = ELBOW_HOME_DEG;
-static int currentWrist    = WRIST_HOME_DEG;
 static int currentGripper  = GRIPPER_HOME_DEG;
 
 void robolinkHandlerInit() {
@@ -43,11 +41,9 @@ void robolinkHandlerUpdate() {
         currentThrottle = robolink.get(KEY_BASE_THROTTLE, 0);
         currentSteer    = robolink.get(KEY_BASE_STEER, 0);
 
-        // Read 5-DOF arm controls (default to home position if not sent)
-        currentWaist    = robolink.get(KEY_ARM_WAIST,    WAIST_HOME_DEG);
+        // Read 2-DOF arm controls (default to home position if not sent)
         currentShoulder = robolink.get(KEY_ARM_SHOULDER, SHOULDER_HOME_DEG);
         currentElbow    = robolink.get(KEY_ARM_ELBOW,    ELBOW_HOME_DEG);
-        currentWrist    = robolink.get(KEY_ARM_WRIST,    WRIST_HOME_DEG);
         currentGripper  = robolink.get(KEY_ARM_GRIPPER,  GRIPPER_HOME_DEG);
     } else {
         // If disconnected or timed out, reset drive throttle/steer to 0
@@ -64,8 +60,6 @@ bool robolinkIsConnected() {
 int robolinkGetThrottle() { return currentThrottle; }
 int robolinkGetSteer()    { return currentSteer; }
 
-int robolinkGetWaist()    { return currentWaist; }
 int robolinkGetShoulder() { return currentShoulder; }
 int robolinkGetElbow()    { return currentElbow; }
-int robolinkGetWrist()    { return currentWrist; }
 int robolinkGetGripper()  { return currentGripper; }

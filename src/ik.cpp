@@ -2,95 +2,60 @@
 #include <math.h>
 
 /*----------------------------------------------------------------------------
- * Default configuration - placeholder link lengths.
- * MUST be calibrated to actual physical arm measurements!
+ * Global configuration - set via ikInit(). These are placeholder defaults
+ * that MUST be replaced with calibrated values from the physical arm.
  *----------------------------------------------------------------------------*/
-static IKConfig defaultConfig = {
-    .shoulderToElbow   = 150.0f,   // Shoulder to elbow link length (mm)
-    .elbowToWrist      = 150.0f,   // Elbow to wrist/link length (mm)
-    .wristToGripper    = 50.0f,    // Wrist to gripper center (mm)
-    .shoulderZOffset   = 50.0f,    // Z height of shoulder pivot (mm)
-    .baseRadius        = 0.0f,     // Base center to shoulder pivot (mm)
-    .waistMin          = 0.0f,
-    .waistMax          = 360.0f,
-    .shoulderMin       = 0.0f,
-    .shoulderMax       = 180.0f,
-    .elbowMin          = 0.0f,
-    .elbowMax          = 180.0f,
-    .wristMin          = -90.0f,
-    .wristMax          = 90.0f
-};
+static float ikShoulderToElbow = 150.0f;   // Shoulder to elbow (mm) - default placeholder
+static float ikElbowToGripper    = 120.0f;  // Elbow to gripper (mm)    - default placeholder
 
 /*----------------------------------------------------------------------------
  * ikInit - Configure IK solver with arm geometry.
- * Provide custom link lengths after physical calibration.
- * If config is NULL, uses default placeholder values.
+ * Provide calibrated link lengths from physical arm measurement.
  *----------------------------------------------------------------------------*/
-IKStatus ikInit(const IKConfig* config) {
-    if (config == NULL) {
-        // Use defaults; caller should replace with calibrated values
-        return IK_SUCCESS;
-    }
-
-    // Validate angle limits
-    if (config->shoulderMin >= config->shoulderMax ||
-        config->elbowMin >= config->elbowMax) {
+IKStatus ikInit(float shoulderToElbow, float elbowToGripper) {
+    if (shoulderToElbow <= 0 || elbowToGripper <= 0) {
         return IK_INVALID_ARG;
     }
 
-    // Copy provided config
-    defaultConfig.shoulderToElbow   = config->shoulderToElbow;
-    defaultConfig.elbowToWrist      = config->elbowToWrist;
-    defaultConfig.wristToGripper    = config->wristToGripper;
-    defaultConfig.shoulderZOffset   = config->shoulderZOffset;
-    defaultConfig.baseRadius        = config->baseRadius;
-    defaultConfig.waistMin          = config->waistMin;
-    defaultConfig.waistMax          = config->waistMax;
-    defaultConfig.shoulderMin       = config->shoulderMin;
-    defaultConfig.shoulderMax       = config->shoulderMax;
-    defaultConfig.elbowMin          = config->elbowMin;
-    defaultConfig.elbowMax          = config->elbowMax;
-
+    ikShoulderToElbow = shoulderToElbow;
+    ikElbowToGripper  = elbowToGripper;
     return IK_SUCCESS;
 }
 
 /*----------------------------------------------------------------------------
- * ikCalculate2DOF - 2-DOF inverse kinematics for shoulder + elbow.
+ * ikCalculate - Core inverse kinematics solver for 2-DOF arm.
  *
- * Given target wrist position (x, z) in the vertical plane relative to
- * base origin, calculate shoulder and elbow angles.
+ * Given target elbow position (x, z) in the vertical plane relative to
+ * shoulder base, calculate shoulder and elbow angles.
  *
  * Assumptions:
- *   - Shoulder at base origin (0,0,0) after waist rotation
+ *   - Shoulder at base origin (0,0) after waist rotation
  *   - Arm operates in vertical plane (XZ plane)
- *   - Shoulder link length: shoulderToElbow
- *   - Elbow/wrist link length: elbowToWrist
+ *   - Shoulder link length: ikShoulderToElbow
+ *   - Elbow/gripper link length: ikElbowToGripper
  *   - Target is reachable if distance d satisfies: |L1-L2| <= d <= L1+L2
  *   - Returns primary (elbow "down") solution
  *
  * Input:  pos->x = forward distance from shoulder (mm)
  *        pos->z = up distance from shoulder (mm) -- positive = up
- *        pos->y is ignored for 2-DOF planar arm
  *
  * Output: angles->shoulder = shoulder pitch angle (degrees)
  *         angles->elbow    = elbow bend angle (degrees)
- *         angles->waist    = unchanged (caller sets prior)
+ *         pose->elbowPos   = computed elbow position
  *----------------------------------------------------------------------------*/
-IKStatus ikCalculate2DOF(const IktargetPosition* pos, IKJointAngles* angles, IKPose* pose) {
+IKStatus ikCalculate(const IktargetPosition* pos, IKJointAngles* angles, IKPose* pose) {
     if (pos == NULL || angles == NULL) {
         return IK_INVALID_ARG;
     }
 
-    // Use default config
-    const IKConfig& cfg = defaultConfig;
+    const float L1 = ikShoulderToElbow;   // shoulder-to-elbow
+    const float L2 = ikElbowToGripper;    // elbow-to-gripper
 
-    // Distance from shoulder to target in XZ plane
+    // Distance from shoulder to target
     float d2 = pos->x * pos->x + pos->z * pos->z;
-    float d = sqrtf(d2);
+    float d  = sqrtf(d2);
 
     // Check reachability: |L1-L2| <= d <= L1+L2
-    float L1 = cfg.shoulderToElbow;   // shoulder-to-elbow
-    float L2 = cfg.elbowToWrist;      // elbow-to-wrist
     float minReach = fabsf(L1 - L2);
     float maxReach = L1 + L2;
 
@@ -110,9 +75,9 @@ IKStatus ikCalculate2DOF(const IktargetPosition* pos, IKJointAngles* angles, IKP
 
     // Shoulder angle:
     // Angle from vertical to line shoulder->target: phi = atan2(x, z)
-    // Shoulder offset: delta = acos((L1^2 + d^2 - L2^2) / (2 * L1 * d))
     float phi = atan2f(pos->x, pos->z) * 180.0f / M_PI;
 
+    // Shoulder offset: delta = acos((L1^2 + d^2 - L2^2) / (2 * L1 * d))
     float cosDelta = (L1 * L1 + d * d - L2 * L2) / (2.0f * L1 * d);
     if (cosDelta > 1.0f) cosDelta = 1.0f;
     if (cosDelta < -1.0f) cosDelta = -1.0f;
@@ -121,87 +86,62 @@ IKStatus ikCalculate2DOF(const IktargetPosition* pos, IKJointAngles* angles, IKP
     // Primary solution: shoulder = phi - delta (elbow bends "down")
     float shoulder = phi - delta;
 
-    // Clamp to configured limits
-    if (shoulder < cfg.shoulderMin) shoulder = cfg.shoulderMin;
-    if (shoulder > cfg.shoulderMax) shoulder = cfg.shoulderMax;
-    if (elbow < cfg.elbowMin) elbow = cfg.elbowMin;
-    if (elbow > cfg.elbowMax) elbow = cfg.elbowMax;
+    // Clamp to reasonable servo limits (0-180)
+    if (shoulder < 0.0f) shoulder = 0.0f;
+    if (shoulder > 180.0f) shoulder = 180.0f;
+    if (elbow < 0.0f) elbow = 0.0f;
+    if (elbow > 180.0f) elbow = 180.0f;
 
     angles->shoulder = shoulder;
     angles->elbow    = elbow;
-    // Waist unchanged - caller should set based on (x,y) projection
+    angles->gripper  = 0.0f;  // Gripper angle set separately
 
-    // Optional: compute wrist position for reporting
+    // Optional: compute elbow position for reporting
     if (pose != NULL) {
-        // Wrist position = elbow position + forearm vector
         // Elbow position = shoulder + upper arm vector
-        float shoulderX = 0.0f;  // after waist rotation applied by caller
-        float shoulderZ = cfg.shoulderZOffset;
+        // Upper arm direction = shoulder angle from vertical
+        float elbowX = L1 * sinf(shoulder * M_PI / 180.0f);
+        float elbowZ = L1 * cosf(shoulder * M_PI / 180.0f);
 
-        // Upper arm end (elbow) position:
-        float elbowX = shoulderX + L1 * sinf(shoulder * M_PI / 180.0f);
-        float elbowZ = shoulderZ + L1 * cosf(shoulder * M_PI / 180.0f);
-
-        // Wrist position: elbow + forearm aligned with shoulder angle + elbow angle
-        // Actually forearm direction = shoulder angle + elbow angle (relative to vertical)
-        float wristX = elbowX + L2 * sinf((shoulder + elbow) * M_PI / 180.0f);
-        float wristZ = elbowZ + L2 * cosf((shoulder + elbow) * M_PI / 180.0f);
-
-        pose->wristPos.x = wristX;
-        pose->wristPos.z = wristZ;
-        pose->wristPos.y = 0.0f;  // planar arm ignores y
+        pose->elbowPos.x = elbowX;
+        pose->elbowPos.z = elbowZ;
     }
 
     return IK_SUCCESS;
 }
 
 /*----------------------------------------------------------------------------
- * ikFromAngleControls - Map existing angle-based controls to IK target.
+ * ikFromAngleControls - Map RoboLink control values to IK target.
  *
- * Converts the current RoboLink angle inputs (0-180 per joint) into a
- * wrist target position that the 2-DOF IK can use. Useful for gradual
- * transition from direct angle control to position-based control.
+ * Converts the RoboLink control values (arm_x for shoulder, arm_y for elbow)
+ * into a elbow target position that the 2-DOF IK can use.
+ * 
+ * The RoboLink app provides values 0-180 for each joint. This function
+ * computes where the elbow wrist end up given those angle settings.
+ * 
+ * For simple mapping, we treat the angle settings as desired positions
+ * and compute the resulting elbow position using the current link lengths.
  *----------------------------------------------------------------------------*/
-bool ikFromAngleControls(
-    int waistDeg, int shoulderDeg, int elbowDeg, int wristDeg, int gripperDeg,
-    IktargetPosition* pos, const IKConfig* config
-) {
+bool ikFromAngleControls(int shoulderDeg, int elbowDeg, IktargetPosition* pos) {
     if (pos == NULL) return false;
 
-    const IKConfig& cfg = (config != NULL) ? *config : defaultConfig;
+    const float L1 = ikShoulderToElbow;
+    const float L2 = ikElbowToGripper;
 
-    // For simple mapping, treat the shoulder/elbow/wrist angles as desired
-    // positions and compute a target wrist position.
-    // This is a inverse mapping: given joint angles, compute where wrist ends up.
+    // Normalize shoulder angle (0-180 -> -90 to +90 from vertical, simplified)
+    // Actually RoboLink 0-180 maps directly to servo angle, so:
+    // shoulderDeg 0 = arm fully down, 180 = arm fully up
+    // We compute the elbow position directly from the shoulder angle
+    
+    // Elbow position from shoulder angle
+    float shoulderRad = shoulderDeg * M_PI / 180.0f;
+    
+    // Elbow XZ position: from shoulder at origin
+    float elbowX = L1 * sinf(shoulderRad);
+    float elbowZ = L1 * cosf(shoulderRad);
 
-    // Assume waist=0 for this mapping (caller should handle waist rotation)
-    float waistRad = 0.0f;
-
-    // Shoulder and elbow as fractions of their ranges
-    float shoulderNorm = (float)shoulderDeg / 180.0f;  // 0-1
-    float elbowNorm    = (float)elbowDeg    / 180.0f;
-
-    // Compute shoulder Z position (simplified: assume shoulder at fixed height)
-    float shoulderZ = cfg.shoulderZOffset;
-
-    // Compute elbow position based on shoulder angle and elbow bend
-    // Simplified: treat as 2-Link planar arm with given angles
-    float L1 = cfg.shoulderToElbow;
-    float L2 = cfg.elbowToWrist;
-
-    // Elbow position
-    float elbowX = L1 * sinf(shoulderDeg * M_PI / 180.0f);
-    float elbowZ = shoulderZ + L1 * cosf(shoulderDeg * M_PI / 180.0f);
-
-    // Wrist position = elbow + forearm
-    // Forearm direction depends on elbow angle
-    float forearmAngle = shoulderDeg + elbowDeg;  // simplified additive model
-    float wristX = elbowX + L2 * sinf(forearmAngle * M_PI / 180.0f);
-    float wristZ = elbowZ + L2 * cosf(forearmAngle * M_PI / 180.0f);
-
-    pos->x = wristX;
-    pos->z = wristZ;
-    pos->y = 0.0f;
+    pos->x = elbowX;
+    pos->z = elbowZ;
 
     return true;
 }
@@ -211,15 +151,15 @@ bool ikFromAngleControls(
  *
  * Maps the IK-derived angles (0-180 degree range) to the duty values
  * expected by the existing servo_control infrastructure.
+ * The existing servo_control expects angles 0-180 mapped to PWM 0-255,
+ * but since we're using 16-bit resolution, we map directly.
  *----------------------------------------------------------------------------*/
-void ikAnglesToServoDuty(const IKJointAngles* angles, int duty[5]) {
+void ikAnglesToServoDuty(const IKJointAngles* angles, int duty[3]) {
     if (angles == NULL || duty == NULL) return;
 
-    // Map angles (0-180) directly to PWM duty 0-180 for compatibility
+    // Map angles (0-180) directly to duty 0-255 for compatibility
     // with existing servo_control clamping logic
-    duty[0] = (int)angles->waist;       // Waist
-    duty[1] = (int)angles->shoulder;    // Shoulder
-    duty[2] = (int)angles->elbow;       // Elbow
-    duty[3] = (int)angles->wrist;       // Wrist
-    duty[4] = (int)angles->gripper;     // Gripper
+    duty[0] = (int)(angles->shoulder * 255.0f / 180.0f);   // Shoulder duty
+    duty[1] = (int)(angles->elbow    * 255.0f / 180.0f);   // Elbow duty
+    duty[2] = (int)(angles->gripper  * 255.0f / 180.0f);   // Gripper duty
 }
